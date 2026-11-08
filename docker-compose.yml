@@ -1,0 +1,129 @@
+services:
+  core-db:
+    image: postgres:16-alpine
+    container_name: mtg-core-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: coredb
+      POSTGRES_USER: mtg_admin
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme_dev_only}
+    volumes:
+      - core-db-data:/var/lib/postgresql/data
+      - ./db-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mtg_admin -d coredb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: mtg-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # management UI (guest/guest)
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Two independent COBOL engine instances behind cobol-lb, standing in for
+  # Parallel Sysplex-style distribution of IMS/Db2 workload across multiple
+  # z/OS images — no single engine instance is a hard dependency.
+  cobol-engine-a:
+    build: ./cobol-engine
+    container_name: mtg-cobol-engine-a
+    restart: unless-stopped
+    environment:
+      ENGINE_PORT: 9001
+      ENGINE_INSTANCE_ID: engine-a
+
+  cobol-engine-b:
+    build: ./cobol-engine
+    container_name: mtg-cobol-engine-b
+    restart: unless-stopped
+    environment:
+      ENGINE_PORT: 9001
+      ENGINE_INSTANCE_ID: engine-b
+
+  cobol-lb:
+    image: nginx:alpine
+    container_name: mtg-cobol-lb
+    restart: unless-stopped
+    depends_on:
+      - cobol-engine-a
+      - cobol-engine-b
+    volumes:
+      - ./cobol-lb/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "9001:9001"
+
+  gateway:
+    build: ./gateway
+    container_name: mtg-gateway
+    restart: unless-stopped
+    depends_on:
+      core-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      cobol-lb:
+        condition: service_started
+    environment:
+      PORT: 8080
+      DATABASE_URL: postgres://mtg_admin:${DB_PASSWORD:-changeme_dev_only}@core-db:5432/coredb
+      COBOL_ENGINE_URL: http://cobol-lb:9001
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      JWT_SECRET: ${JWT_SECRET:-dev_only_change_me_1234567890}
+      NODE_ENV: production
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-dev_only_32_byte_key_change_me!}
+    ports:
+      - "8080:8080"
+
+  # Decoupled, asynchronous consumer: scores every posted transaction for
+  # fraud risk without sitting on the teller-facing request path.
+  fraud-consumer:
+    build: ./fraud-consumer
+    container_name: mtg-fraud-consumer
+    restart: unless-stopped
+    depends_on:
+      core-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://mtg_admin:${DB_PASSWORD:-changeme_dev_only}@core-db:5432/coredb
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+
+  # Stands in for a nightly JCL-scheduled COBOL batch job (interest accrual),
+  # run here on a short demo cadence via cron instead of a real job scheduler.
+  batch-scheduler:
+    build: ./batch
+    container_name: mtg-batch-scheduler
+    restart: unless-stopped
+    depends_on:
+      core-db:
+        condition: service_healthy
+      cobol-lb:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://mtg_admin:${DB_PASSWORD:-changeme_dev_only}@core-db:5432/coredb
+      COBOL_ENGINE_URL: http://cobol-lb:9001
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DAILY_RATE_BASIS_POINTS: "3"
+
+  ui:
+    build: ./ui
+    container_name: mtg-ui
+    restart: unless-stopped
+    depends_on:
+      - gateway
+    ports:
+      - "5173:80"
+
+volumes:
+  core-db-data:

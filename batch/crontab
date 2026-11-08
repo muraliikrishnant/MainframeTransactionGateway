@@ -1,0 +1,3 @@
+# Demo cadence: every 3 minutes, standing in for a real nightly batch window
+# (e.g. "0 1 * * *" for 1am daily on an actual production schedule).
+*/3 * * * * /usr/local/bin/python /app/interest_batch.py >> /proc/1/fd/1 2>> /proc/1/fd/2
