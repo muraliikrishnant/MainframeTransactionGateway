@@ -203,14 +203,34 @@ function TellerView({ token }) {
 
           {form.txnType !== "DEPOSIT" && (
             <>
-              <label>From Account ID</label>
-              <input value={form.fromAccountId} onChange={(e) => setForm({ ...form, fromAccountId: e.target.value })} />
+              <label>From Account</label>
+              <select
+                value={form.fromAccountId}
+                onChange={(e) => setForm({ ...form, fromAccountId: e.target.value })}
+              >
+                <option value="">Select account…</option>
+                {accounts.map((a) => (
+                  <option key={a.account_id} value={a.account_id}>
+                    {a.account_number} — {a.holder_name} ({centsToDollars(a.balance_cents)})
+                  </option>
+                ))}
+              </select>
             </>
           )}
           {form.txnType !== "WITHDRAW" && (
             <>
-              <label>To Account ID</label>
-              <input value={form.toAccountId} onChange={(e) => setForm({ ...form, toAccountId: e.target.value })} />
+              <label>To Account</label>
+              <select
+                value={form.toAccountId}
+                onChange={(e) => setForm({ ...form, toAccountId: e.target.value })}
+              >
+                <option value="">Select account…</option>
+                {accounts.map((a) => (
+                  <option key={a.account_id} value={a.account_id}>
+                    {a.account_number} — {a.holder_name} ({centsToDollars(a.balance_cents)})
+                  </option>
+                ))}
+              </select>
             </>
           )}
           <label>Amount (USD)</label>
